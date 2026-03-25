@@ -336,10 +336,15 @@ function getWallData(verts){
     const a=verts[i],b=verts[(i+1)%verts.length];
     const len=Math.hypot(b.x-a.x,b.y-a.y);
     const dx=(b.x-a.x)/len,dy=(b.y-a.y)/len;
-    const nx=-(b.y-a.y)/len,ny=(b.x-a.x)/len;
-    const mmx=(a.x+b.x)/2,mmy=(a.y+b.y)/2;
-    const inward=(nx*(CX-mmx)+ny*(CY-mmy))>0;
-    walls.push({a,b,len,dx,dy,nx:inward?nx:-nx,ny:inward?ny:-ny,pos:0.5,psize:0.22});
+    // two candidate normals
+    const nx1=-(b.y-a.y)/len, ny1=(b.x-a.x)/len;
+    const nx2=(b.y-a.y)/len,  ny2=-(b.x-a.x)/len;
+    // pick the one pointing inward (toward center)
+    const mmx=(a.x+b.x)/2, mmy=(a.y+b.y)/2;
+    const dot1=nx1*(CX-mmx)+ny1*(CY-mmy);
+    const nx=dot1>0?nx1:nx2;
+    const ny=dot1>0?ny1:ny2;
+    walls.push({a,b,len,dx,dy,nx,ny,pos:0.5,psize:0.19});
   }
   return walls;
 }
@@ -411,7 +416,7 @@ function launchBall(){
 function initGame(){
   elapsed=0;score=0;shapeTimer=0;waveTime=0;currentSides=4;
   bx=CX;by=CY;bvx=0;bvy=0;br=10;bWobble=0;bWobbleV=0;
-  paddleSize=0.22;morphing=false;
+  paddleSize=0.19;morphing=false;
   parts=[];trails=[];stars=[];deathParts=[];
   shake={x:0,y:0,mag:0};hitCount=0;topSpeed=0;levelFlash=0;
   const pal=getPal(4);bgCurrent=pal.bg;bgTarget=pal.bg;bgLerp=1;
@@ -456,10 +461,12 @@ function doMorphToNext(){
 function updatePaddles(){
   walls.forEach(wall=>{
     const ax=mx-wall.a.x,ay=my-wall.a.y;
-    let t=(ax*wall.dx+ay*wall.dy)/wall.len;
-    t=Math.max(0.04,Math.min(0.96,t));
+    const along=ax*wall.dx+ay*wall.dy;
+    let t=along/wall.len;
+    const margin=wall.psize/2+0.02;
+    t=Math.max(margin,Math.min(1-margin,t));
     wall.pos+=(t-wall.pos)*0.2;
-    wall.pos=Math.max(wall.psize/2+0.01,Math.min(1-wall.psize/2-0.01,wall.pos));
+    wall.pos=Math.max(margin,Math.min(1-margin,wall.pos));
     wall.psize=paddleSize;
   });
 }
@@ -469,22 +476,34 @@ function ballVsWalls(){
   const pal=getPal(currentSides);
   walls.forEach((wall,wi)=>{
     const ax=bx-wall.a.x,ay=by-wall.a.y;
+    // signed distance from ball center to wall plane (positive = inside arena)
     const dist=ax*wall.nx+ay*wall.ny;
-    if(dist>br||dist<-br*4)return;
+    // only care when ball is near or past the wall
+    if(dist>br+2)return;
+    // position along the wall
     const along=ax*wall.dx+ay*wall.dy;
+    // skip if ball is way outside the wall segment bounds
+    if(along<-br||along>wall.len+br)return;
     const pc=wall.pos*wall.len,ph=wall.psize*wall.len/2;
     if(Math.abs(along-pc)<ph){
-      bx+=wall.nx*(br-dist+0.5);by+=wall.ny*(br-dist+0.5);
+      // hit paddle — reflect
+      const pushOut=br-dist+0.5;
+      bx+=wall.nx*pushOut;by+=wall.ny*pushOut;
       const dot=bvx*wall.nx+bvy*wall.ny;
       bvx-=2*dot*wall.nx;bvy-=2*dot*wall.ny;
+      // angle deflection from off-center hit
       const off=(along-pc)/ph,tx=-wall.ny,ty=wall.nx;
-      bvx+=off*tx*1.8;bvy+=off*ty*1.8;
+      bvx+=off*tx*1.6;bvy+=off*ty*1.6;
+      // renorm to target speed
       const sp=Math.sqrt(bvx*bvx+bvy*bvy),ts=getBallSpeed();
       if(sp>0){bvx=(bvx/sp)*ts;bvy=(bvy/sp)*ts;}
       bWobbleV=0.45;
       const hx=wall.a.x+along*wall.dx,hy=wall.a.y+along*wall.dy;
       spawnStars(hx,hy,pal.star,5);addShake(4);sndHit();hitCount++;
-    } else {dead=wi;}
+    } else if(dist<=br){
+      // hit wall but missed paddle — dead
+      dead=wi;
+    }
   });
   return dead;
 }
@@ -504,7 +523,7 @@ function update(dt){
   if(gstate!=='playing')return;
   elapsed+=dt;shapeTimer+=dt;waveTime+=dt/1000*1.2;
   if(bgLerp<1){bgLerp=Math.min(1,bgLerp+dt/900);bgCurrent=lerpHex(bgCurrent,bgTarget,bgLerp);}
-  paddleSize=Math.max(0.055,0.22-(elapsed/1000)*0.0018);
+  paddleSize=Math.max(0.05,0.19-(elapsed/1000)*0.0016);
   if(shapeTimer>=getShapeDur(currentSides)&&!morphing)doMorphToNext();
   updateMorph();if(morphT<1)walls=getWallData(polyVerts);
   updatePaddles();
