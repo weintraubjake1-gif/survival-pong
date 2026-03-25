@@ -331,25 +331,83 @@ function initPoly(sides){
 }
 
 function getWallData(verts){
+  // Build one wall per edge. Normal always points INWARD (toward center CX,CY).
   const walls=[];
   for(let i=0;i<verts.length;i++){
-    const a=verts[i],b=verts[(i+1)%verts.length];
-    const len=Math.hypot(b.x-a.x,b.y-a.y);
-    const dx=(b.x-a.x)/len,dy=(b.y-a.y)/len;
-    // two candidate normals
-    const nx1=-(b.y-a.y)/len, ny1=(b.x-a.x)/len;
-    const nx2=(b.y-a.y)/len,  ny2=-(b.x-a.x)/len;
-    // pick the one pointing inward (toward center)
-    const mmx=(a.x+b.x)/2, mmy=(a.y+b.y)/2;
-    const dot1=nx1*(CX-mmx)+ny1*(CY-mmy);
-    const nx=dot1>0?nx1:nx2;
-    const ny=dot1>0?ny1:ny2;
-    walls.push({a,b,len,dx,dy,nx,ny,pos:0.5,psize:0.19});
+    const a=verts[i], b=verts[(i+1)%verts.length];
+    const ex=b.x-a.x, ey=b.y-a.y;
+    const len=Math.hypot(ex,ey);
+    const dx=ex/len, dy=ey/len;
+    // perpendicular — pick direction pointing toward center
+    let nx=-dy, ny=dx;
+    const mx=(a.x+b.x)/2, my=(a.y+b.y)/2;
+    if(nx*(CX-mx)+ny*(CY-my)<0){ nx=-nx; ny=-ny; }
+    walls.push({a,b,dx,dy,nx,ny,len,pos:0.5,psize:paddleSize});
   }
   return walls;
 }
 
-let gstate='start';
+function updatePaddles(){
+  walls.forEach(wall=>{
+    // project mouse onto wall segment to get 0..1 position
+    const ax=mx-wall.a.x, ay=my-wall.a.y;
+    let t=(ax*wall.dx + ay*wall.dy)/wall.len;
+    // clamp so paddle stays fully within wall
+    const half=wall.psize/2;
+    t=Math.max(half+0.01, Math.min(1-half-0.01, t));
+    // smooth follow
+    wall.pos+=(t-wall.pos)*0.18;
+    wall.pos=Math.max(half+0.01, Math.min(1-half-0.01, wall.pos));
+    wall.psize=paddleSize;
+  });
+}
+
+function ballVsWalls(){
+  // Returns wall index of fatal miss, or -1 if still alive.
+  // Key rule: only bounce when ball is MOVING TOWARD wall (vDot < 0).
+  // This prevents double-bouncing, sticking, and tunneling.
+  let dead=-1;
+  const pal=getPal(currentSides);
+  for(let wi=0;wi<walls.length;wi++){
+    const wall=walls[wi];
+    const ax=bx-wall.a.x, ay=by-wall.a.y;
+    // dist > 0 means ball is on the inside (good). dist < 0 means past wall.
+    const dist=ax*wall.nx + ay*wall.ny;
+    if(dist>br) continue; // far from wall, skip
+    // where along the wall is the ball?
+    const along=ax*wall.dx + ay*wall.dy;
+    if(along<0 || along>wall.len) continue; // outside segment
+    // velocity toward wall?
+    const vDot=bvx*wall.nx + bvy*wall.ny;
+    if(vDot>=0) continue; // moving away — already bounced, skip
+    // paddle zone
+    const pc=wall.pos*wall.len;
+    const ph=wall.psize*wall.len/2;
+    if(Math.abs(along-pc)<=ph){
+      // ── PADDLE HIT ──
+      // position: push ball to wall surface
+      bx+=wall.nx*(br-dist);
+      by+=wall.ny*(br-dist);
+      // velocity: reflect component along normal
+      bvx-=2*vDot*wall.nx;
+      bvy-=2*vDot*wall.ny;
+      // spin: small tangent nudge based on off-center hit (capped)
+      const off=Math.max(-0.8,Math.min(0.8,(along-pc)/ph));
+      const spinAmt=Math.sqrt(bvx*bvx+bvy*bvy)*0.12;
+      bvx+=wall.dy*off*spinAmt;
+      bvy-=wall.dx*off*spinAmt;
+      // effects
+      bWobbleV=0.5;
+      const hx=wall.a.x+along*wall.dx, hy=wall.a.y+along*wall.dy;
+      spawnStars(hx,hy,pal.star,5);
+      addShake(3); sndHit(); hitCount++;
+    } else {
+      // ── MISSED — DEAD ──
+      dead=wi;
+    }
+  }
+  return dead;
+}
 let elapsed=0,score=0,bestScore=0;
 let animId=null,loopLast=null;
 let mx=SZ/2,my=SZ/2;
@@ -458,66 +516,6 @@ function doMorphToNext(){
   },settleDur);
 }
 
-function updatePaddles(){
-  walls.forEach(wall=>{
-    const ax=mx-wall.a.x,ay=my-wall.a.y;
-    const along=ax*wall.dx+ay*wall.dy;
-    let t=along/wall.len;
-    const margin=wall.psize/2+0.02;
-    t=Math.max(margin,Math.min(1-margin,t));
-    wall.pos+=(t-wall.pos)*0.2;
-    wall.pos=Math.max(margin,Math.min(1-margin,wall.pos));
-    wall.psize=paddleSize;
-  });
-}
-
-function ballVsWalls(){
-  let dead=-1;
-  const pal=getPal(currentSides);
-  walls.forEach((wall,wi)=>{
-    const ax=bx-wall.a.x, ay=by-wall.a.y;
-    // signed distance: positive = ball is inside arena (correct side of wall)
-    const dist=ax*wall.nx + ay*wall.ny;
-    // ball not close enough to this wall — skip
-    if(dist>br+1) return;
-    // how far along the wall the ball is (0..wall.len)
-    const along=ax*wall.dx + ay*wall.dy;
-    // ball is outside wall segment bounds — skip
-    if(along<0 || along>wall.len) return;
-    // velocity component toward the wall (negative means approaching)
-    const vDot=bvx*wall.nx + bvy*wall.ny;
-    // only react if ball is actually moving INTO the wall
-    // this prevents double-bouncing and sticking
-    if(vDot>0) return;
-    const pc=wall.pos*wall.len, ph=wall.psize*wall.len/2;
-    if(Math.abs(along-pc)<ph){
-      // ── HIT PADDLE ──
-      // push ball back to wall surface
-      bx+=wall.nx*(br-dist);
-      by+=wall.ny*(br-dist);
-      // reflect velocity around inward normal
-      bvx-=2*vDot*wall.nx;
-      bvy-=2*vDot*wall.ny;
-      // gentle angle nudge based on hit offset (max ±25°)
-      const off=(along-pc)/ph;
-      bvx+=wall.ny*off*0.8;
-      bvy-=wall.nx*off*0.8;
-      // renormalise to exact target speed
-      const spd=Math.sqrt(bvx*bvx+bvy*bvy);
-      const target=getBallSpeed();
-      if(spd>0){bvx=(bvx/spd)*target; bvy=(bvy/spd)*target;}
-      bWobbleV=0.45;
-      const hx=wall.a.x+along*wall.dx, hy=wall.a.y+along*wall.dy;
-      spawnStars(hx,hy,pal.star,5);
-      addShake(4); sndHit(); hitCount++;
-    } else {
-      // ── MISSED PADDLE — DEAD ──
-      dead=wi;
-    }
-  });
-  return dead;
-}
-
 function updateHUD(){
   const pal=getPal(currentSides);
   scoreEl.textContent=fmtScore(score);bestEl.textContent='Best: '+fmtScore(bestScore);
@@ -535,21 +533,37 @@ function update(dt){
   if(bgLerp<1){bgLerp=Math.min(1,bgLerp+dt/900);bgCurrent=lerpHex(bgCurrent,bgTarget,bgLerp);}
   paddleSize=Math.max(0.05,0.19-(elapsed/1000)*0.0016);
   if(shapeTimer>=getShapeDur(currentSides)&&!morphing)doMorphToNext();
-  updateMorph();if(morphT<1)walls=getWallData(polyVerts);
+  updateMorph();
+  // rebuild walls every frame during morph, or when paddleSize changes
+  walls=getWallData(polyVerts);
   updatePaddles();
-  const ts=getBallSpeed(),cs=Math.sqrt(bvx*bvx+bvy*bvy);
-  if(cs>0.1){const sc=ts/cs;bvx*=sc;bvy*=sc;if(cs>topSpeed)topSpeed=cs;}
+
+  // gently nudge speed toward target once per frame (not forced)
+  const targetSpd=getBallSpeed();
+  const curSpd=Math.sqrt(bvx*bvx+bvy*bvy);
+  if(curSpd>0.1){
+    // ease 2% per frame toward target — smooth, not jarring
+    const newSpd=curSpd+(targetSpd-curSpd)*0.02;
+    bvx=(bvx/curSpd)*newSpd;
+    bvy=(bvy/curSpd)*newSpd;
+    if(curSpd>topSpeed)topSpeed=curSpd;
+  }
+
   bWobbleV+=-bWobble*0.4;bWobble+=bWobbleV;bWobble*=0.82;
   const pal=getPal(currentSides);
   trails.push({x:bx,y:by,life:1,color:pal.paddle});
   if(trails.length>20)trails.shift();trails.forEach(t=>t.life-=0.08);
+
+  // sub-steps for accurate collision at high speed
   const STEPS=4;
   for(let s=0;s<STEPS;s++){
-    bx+=bvx/STEPS;by+=bvy/STEPS;
-    const dr=Math.hypot(bx-CX,by-CY);
-    if(dr>ARENA_R*1.06){const ang=Math.atan2(by-CY,bx-CX);bx=CX+Math.cos(ang)*ARENA_R;by=CY+Math.sin(ang)*ARENA_R;}
-    if(!morphing){const dw=ballVsWalls();if(dw>=0){triggerDeath();return;}}
+    bx+=bvx/STEPS; by+=bvy/STEPS;
+    if(!morphing){
+      const dw=ballVsWalls();
+      if(dw>=0){triggerDeath();return;}
+    }
   }
+
   tickScore(dt);
   parts=parts.filter(p=>p.life>0);
   parts.forEach(p=>{p.x+=p.vx;p.y+=p.vy;p.vy+=0.16;p.vx*=0.97;p.life-=0.025;if(p.rotV)p.rot+=p.rotV;});
