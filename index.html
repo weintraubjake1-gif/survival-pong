@@ -324,6 +324,11 @@ function updateMorph(){
   morphFrame++;morphT=Math.min(1,morphFrame/MORPH_DUR);
   const e=morphT<0.5?2*morphT*morphT:(1-Math.pow(-2*morphT+2,2)/2);
   polyVerts=polyFrom.map((f,i)=>({x:f.x+(polyTarget[i].x-f.x)*e,y:f.y+(polyTarget[i].y-f.y)*e}));
+  // when morph finishes, snap to exact clean polygon (correct vertex count)
+  if(morphT>=1){
+    const v=getRegularPoly(currentSides,ARENA_R,polyAO(currentSides));
+    polyVerts=v.map(p=>({...p}));
+  }
 }
 function initPoly(sides){
   const v=getRegularPoly(sides,ARENA_R,polyAO(sides));
@@ -507,6 +512,10 @@ function doMorphToNext(){
   currentSides=newSides;shapeTimer=0;
   const settleDur=MORPH_DUR/60*1000+400;
   setTimeout(()=>{
+    // snap to exact clean polygon with correct side count
+    const cleanVerts=getRegularPoly(currentSides,ARENA_R,polyAO(currentSides));
+    polyVerts=cleanVerts.map(p=>({...p}));
+    morphT=1;
     walls=getWallData(polyVerts);
     walls.forEach(w=>w.psize=paddleSize);
     morphing=false;
@@ -535,8 +544,11 @@ function update(dt){
   paddleSize=Math.max(0.05,0.19-(elapsed/1000)*0.0016);
   if(shapeTimer>=getShapeDur(currentSides)&&!morphing)doMorphToNext();
   updateMorph();
-  // rebuild walls every frame during morph, or when paddleSize changes
-  walls=getWallData(polyVerts);
+  // during morph: rebuild walls from interpolating verts
+  // after morph: walls are already set to clean polygon by doMorphToNext
+  if(morphT<1){
+    walls=getWallData(polyVerts);
+  }
   updatePaddles();
 
   // gently nudge speed toward target once per frame (not forced)
