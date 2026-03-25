@@ -355,9 +355,8 @@ function updatePaddles(){
     // clamp so paddle stays fully within wall
     const half=wall.psize/2;
     t=Math.max(half+0.01, Math.min(1-half-0.01, t));
-    // smooth follow
-    wall.pos+=(t-wall.pos)*0.18;
-    wall.pos=Math.max(half+0.01, Math.min(1-half-0.01, wall.pos));
+    // direct tracking — no lag
+    wall.pos=t;
     wall.psize=paddleSize;
   });
 }
