@@ -475,33 +475,43 @@ function ballVsWalls(){
   let dead=-1;
   const pal=getPal(currentSides);
   walls.forEach((wall,wi)=>{
-    const ax=bx-wall.a.x,ay=by-wall.a.y;
-    // signed distance from ball center to wall plane (positive = inside arena)
-    const dist=ax*wall.nx+ay*wall.ny;
-    // only care when ball is near or past the wall
-    if(dist>br+2)return;
-    // position along the wall
-    const along=ax*wall.dx+ay*wall.dy;
-    // skip if ball is way outside the wall segment bounds
-    if(along<-br||along>wall.len+br)return;
-    const pc=wall.pos*wall.len,ph=wall.psize*wall.len/2;
+    const ax=bx-wall.a.x, ay=by-wall.a.y;
+    // signed distance: positive = ball is inside arena (correct side of wall)
+    const dist=ax*wall.nx + ay*wall.ny;
+    // ball not close enough to this wall — skip
+    if(dist>br+1) return;
+    // how far along the wall the ball is (0..wall.len)
+    const along=ax*wall.dx + ay*wall.dy;
+    // ball is outside wall segment bounds — skip
+    if(along<0 || along>wall.len) return;
+    // velocity component toward the wall (negative means approaching)
+    const vDot=bvx*wall.nx + bvy*wall.ny;
+    // only react if ball is actually moving INTO the wall
+    // this prevents double-bouncing and sticking
+    if(vDot>0) return;
+    const pc=wall.pos*wall.len, ph=wall.psize*wall.len/2;
     if(Math.abs(along-pc)<ph){
-      // hit paddle — reflect
-      const pushOut=br-dist+0.5;
-      bx+=wall.nx*pushOut;by+=wall.ny*pushOut;
-      const dot=bvx*wall.nx+bvy*wall.ny;
-      bvx-=2*dot*wall.nx;bvy-=2*dot*wall.ny;
-      // angle deflection from off-center hit
-      const off=(along-pc)/ph,tx=-wall.ny,ty=wall.nx;
-      bvx+=off*tx*1.6;bvy+=off*ty*1.6;
-      // renorm to target speed
-      const sp=Math.sqrt(bvx*bvx+bvy*bvy),ts=getBallSpeed();
-      if(sp>0){bvx=(bvx/sp)*ts;bvy=(bvy/sp)*ts;}
+      // ── HIT PADDLE ──
+      // push ball back to wall surface
+      bx+=wall.nx*(br-dist);
+      by+=wall.ny*(br-dist);
+      // reflect velocity around inward normal
+      bvx-=2*vDot*wall.nx;
+      bvy-=2*vDot*wall.ny;
+      // gentle angle nudge based on hit offset (max ±25°)
+      const off=(along-pc)/ph;
+      bvx+=wall.ny*off*0.8;
+      bvy-=wall.nx*off*0.8;
+      // renormalise to exact target speed
+      const spd=Math.sqrt(bvx*bvx+bvy*bvy);
+      const target=getBallSpeed();
+      if(spd>0){bvx=(bvx/spd)*target; bvy=(bvy/spd)*target;}
       bWobbleV=0.45;
-      const hx=wall.a.x+along*wall.dx,hy=wall.a.y+along*wall.dy;
-      spawnStars(hx,hy,pal.star,5);addShake(4);sndHit();hitCount++;
-    } else if(dist<=br){
-      // hit wall but missed paddle — dead
+      const hx=wall.a.x+along*wall.dx, hy=wall.a.y+along*wall.dy;
+      spawnStars(hx,hy,pal.star,5);
+      addShake(4); sndHit(); hitCount++;
+    } else {
+      // ── MISSED PADDLE — DEAD ──
       dead=wi;
     }
   });
