@@ -408,6 +408,8 @@ function ballVsWalls(){
   }
   return dead;
 }
+
+let gstate='start';
 let elapsed=0,score=0,bestScore=0;
 let animId=null,loopLast=null;
 let mx=SZ/2,my=SZ/2;
@@ -418,7 +420,7 @@ let parts=[],trails=[],stars=[],deathParts=[];
 let shake={x:0,y:0,mag:0};
 let hitCount=0,topSpeed=0;
 let currentSides=4,shapeTimer=0,morphing=false;
-let paddleSize=0.22,waveTime=0,levelFlash=0;
+let paddleSize=0.19,waveTime=0,levelFlash=0;
 let cdTimer=null,cdVal=5,lastScore=0;
 let bgCurrent='#fff5f5',bgTarget='#fff5f5',bgLerp=1;
 
