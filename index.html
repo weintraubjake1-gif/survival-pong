@@ -472,7 +472,12 @@ function updateShake(){
 
 function launchBall(){
   if(gstate!=='playing')return;
-  const angle=Math.PI/4+(Math.random()-0.5)*0.9,spd=getBallSpeed();
+  // pick angle that's never too flat (always at least 20° from horizontal)
+  const minAngle=0.35; // ~20 degrees
+  let angle=Math.PI/4+(Math.random()-0.5)*0.7;
+  // ensure enough vertical component
+  if(Math.abs(Math.sin(angle))<minAngle) angle=Math.sign(Math.sin(angle)||1)*Math.asin(minAngle);
+  const spd=getBallSpeed();
   bvx=Math.cos(angle)*spd*(Math.random()<0.5?1:-1);
   bvy=Math.sin(angle)*spd*(Math.random()<0.5?1:-1);
 }
@@ -632,18 +637,17 @@ function drawFrame(){
     else{cx.beginPath();cx.arc(0,0,p.r,0,Math.PI*2);cx.fill();cx.stroke();}
     cx.restore();
   });
-  // death explosion
+  // death explosion — particles already advanced in boom loop
   deathParts.forEach(p=>{
     if(p.life<=0)return;
-    p.x+=p.vx;p.y+=p.vy;p.vy+=0.22;p.vx*=0.96;p.life-=0.019;if(p.rotV!==undefined)p.rot+=p.rotV;
-    cx.save();cx.globalAlpha=Math.max(0,p.life);cx.translate(p.x,p.y);if(p.rot!==undefined)cx.rotate(p.rot);
+    cx.save();cx.globalAlpha=Math.max(0,p.life);cx.translate(p.x,p.y);
+    if(p.rot!==undefined)cx.rotate(p.rot);
     cx.fillStyle=p.color;cx.strokeStyle='#2a1a0e';cx.lineWidth=2;
     const sz=p.r*Math.max(0,p.life);
     if(p.square){cx.fillRect(-sz,-sz,sz*2,sz*2);cx.strokeRect(-sz,-sz,sz*2,sz*2);}
     else{cx.beginPath();cx.arc(0,0,sz,0,Math.PI*2);cx.fill();cx.stroke();}
     cx.restore();
   });
-  deathParts=deathParts.filter(p=>p.life>0);
   // trails
   trails.forEach(tr=>{
     if(tr.life<=0)return;
@@ -656,7 +660,7 @@ function drawFrame(){
       const ph=wall.psize*wall.len/2,pc=wall.pos*wall.len;
       const px=wall.a.x+wall.dx*pc,py=wall.a.y+wall.dy*pc;
       const ex=wall.dx*ph,ey=wall.dy*ph,pw=10;
-      const nnx=wall.ny*pw,nny=-wall.nx*pw;
+      const nnx=wall.nx*pw,nny=wall.ny*pw;
       cx.save();
       cx.fillStyle='#2a1a0e';
       cx.beginPath();cx.moveTo(px-ex+4,py-ey+5);cx.lineTo(px+ex+4,py+ey+5);cx.lineTo(px+ex+nnx+4,py+ey+nny+5);cx.lineTo(px-ex+nnx+4,py-ey+nny+5);cx.closePath();cx.fill();
@@ -685,13 +689,19 @@ function drawFrame(){
   cx.strokeStyle='#2a1a0e';cx.lineWidth=2.5;cx.lineCap='round';
   cx.beginPath();cx.arc(0,br*0.12,br*0.35,0.25,Math.PI-0.25);cx.stroke();
   cx.restore();
-  // crosshair
-  cx.strokeStyle=pal.paddle+'55';cx.lineWidth=1.5;cx.setLineDash([4,9]);
-  cx.beginPath();cx.moveTo(mx,0);cx.lineTo(mx,SZ);cx.stroke();
-  cx.beginPath();cx.moveTo(0,my);cx.lineTo(SZ,my);cx.stroke();
-  cx.setLineDash([]);
-  cx.fillStyle=pal.paddle;cx.strokeStyle='#2a1a0e';cx.lineWidth=2.5;
-  cx.beginPath();cx.arc(mx,my,6,0,Math.PI*2);cx.fill();cx.stroke();
+  // crosshair — clipped inside arena only
+  if(polyVerts.length>2){
+    cx.save();
+    cx.beginPath();polyVerts.forEach((v,i)=>{if(i===0)cx.moveTo(v.x,v.y);else cx.lineTo(v.x,v.y);});
+    cx.closePath();cx.clip();
+    cx.strokeStyle=pal.paddle+'44';cx.lineWidth=1.5;cx.setLineDash([4,9]);
+    cx.beginPath();cx.moveTo(mx,0);cx.lineTo(mx,SZ);cx.stroke();
+    cx.beginPath();cx.moveTo(0,my);cx.lineTo(SZ,my);cx.stroke();
+    cx.setLineDash([]);
+    cx.fillStyle=pal.paddle;cx.strokeStyle='#2a1a0e';cx.lineWidth=2;
+    cx.beginPath();cx.arc(mx,my,5,0,Math.PI*2);cx.fill();cx.stroke();
+    cx.restore();
+  }
   // level flash
   if(levelFlash>0){
     const p=levelFlash/60;
@@ -710,15 +720,25 @@ function drawFrame(){
 function gameLoop(ts){
   if(!loopLast)loopLast=ts;
   const dt=Math.min(ts-loopLast,30);loopLast=ts;
-  update(dt);drawFrame();animId=requestAnimationFrame(gameLoop);
+  update(dt);drawFrame();
+  if(gstate==='playing') animId=requestAnimationFrame(gameLoop);
 }
 
 function triggerDeath(){
+  if(gstate==='dead')return; // guard against double-fire
   gstate='dead';cancelAnimationFrame(animId);animId=null;
   lastScore=score;spawnDeath(bx,by);addShake(22);sndDeath();
   let f=0;
   function boom(ts){
-    if(!boom._l)boom._l=ts;boom._l=ts;updateShake();drawFrame();
+    if(!boom._l)boom._l=ts;boom._l=ts;
+    updateShake();
+    // advance death particles here not in drawFrame
+    deathParts.forEach(p=>{
+      p.x+=p.vx;p.y+=p.vy;p.vy+=0.22;p.vx*=0.96;p.life-=0.019;
+      if(p.rotV!==undefined)p.rot+=p.rotV;
+    });
+    deathParts=deathParts.filter(p=>p.life>0);
+    drawFrame();
     if(f++<65)requestAnimationFrame(boom);else revealDeath();
   }
   requestAnimationFrame(boom);
@@ -750,6 +770,8 @@ function revealDeath(){
 function startCountdown(){
   cdVal=5;cdNum.textContent=cdVal;cdArc.style.strokeDashoffset='0';clearCD();
   cdTimer=setInterval(()=>{
+    // pause countdown while name prompt is open
+    if(namePrompt.style.display==='flex') return;
     cdVal--;cdNum.textContent=cdVal;
     cdArc.style.strokeDashoffset=String(CIRC*(1-cdVal/5));
     if(cdVal<=0){clearCD();startGame();}
